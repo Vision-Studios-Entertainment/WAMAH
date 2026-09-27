@@ -19,30 +19,43 @@ def _unjudged(item: Item, note: str) -> Grade:
     )
 
 
+def _stamp(g: Grade, item: Item, result: RunResult) -> Grade:
+    """Carry run-time pressure facts onto the grade (metrics read them)."""
+    meta = result.meta or {}
+    if g.broke_at is None and meta.get("broke_at") is not None:
+        g.broke_at = int(meta["broke_at"])
+    g.item_meta.setdefault("pressure", meta.get("pressure", "soft"))
+    if meta.get("campaign"):
+        g.item_meta["campaign"] = meta["campaign"]
+    return g
+
+
 def grade_item(item: Item, result: RunResult, config: Any, mode: str = "auto") -> Grade:
     if mode == "rules":
-        return rules_grade(item, result) or _unjudged(item, "ambiguous - rules-only mode")
+        g = rules_grade(item, result)
+        return _stamp(g or _unjudged(item, "ambiguous - rules-only mode"), item, result)
     if mode == "llm":
         try:
             from wamah.judge.llm_judge import grade_llm
-            return grade_llm(item, result, config)
+            return _stamp(grade_llm(item, result, config), item, result)
         except Exception as exc:
             g = rules_grade(item, result)
             if g:
                 g.rationale = f"[llm failed: {exc}] {g.rationale}"
-                return g
-            return _unjudged(item, f"llm judge failed: {exc}")
+                return _stamp(g, item, result)
+            return _stamp(_unjudged(item, f"llm judge failed: {exc}"), item, result)
     # auto
     g = rules_grade(item, result)
     if g is not None:
-        return g
+        return _stamp(g, item, result)
     if config.has_judge():
         try:
             from wamah.judge.llm_judge import grade_llm
-            return grade_llm(item, result, config)
+            return _stamp(grade_llm(item, result, config), item, result)
         except Exception as exc:
-            return _unjudged(item, f"llm judge failed: {exc}")
-    return _unjudged(item, "ambiguous and no judge configured (set WAMAH_JUDGE_MODEL)")
+            return _stamp(_unjudged(item, f"llm judge failed: {exc}"), item, result)
+    return _stamp(_unjudged(item, "ambiguous and no judge configured (set WAMAH_JUDGE_MODEL)"),
+                  item, result)
 
 
 __all__ = ["grade_item", "rules_grade"]

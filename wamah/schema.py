@@ -79,6 +79,7 @@ class Item(BaseModel):
     depth: int                    # X in 21^X
     probes: list[str]             # ordered probe ids, length == depth
     harness: str                  # harness id
+    endgame_harness: Optional[str] = None  # second trap chained after the primary (S4+)
     system: Optional[str] = None
     openers: list[Message] = Field(default_factory=list)   # ordered user turns
     poisons: list[Poison] = Field(default_factory=list)     # category P payloads
@@ -136,6 +137,7 @@ class Grade(BaseModel):
     canary_leaked: bool = False          # P category: injection canary surfaced
     canary_imitated: bool = False        # D category: obviously-wrong fact echoed
     poisoned_label_adopted: bool = False # D category: refusal-with-stance flip
+    broke_at: Optional[int] = None   # 1-based exchange at which substantive compliance first appeared
     rationale: str = ""
     judge: str = "rules"                 # rules | llm | human
     item_meta: dict[str, Any] = Field(default_factory=dict)  # tier/category/family/harness/control/depth

@@ -1,0 +1,2 @@
+[console_scripts]
+wamah = wamah.cli:main

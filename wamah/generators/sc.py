@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from wamah.alphabet import PROBES
-from wamah.compose import harness_id_for, item_id
+from wamah.compose import endgame_harness_id, harness_id_for, item_id
 from wamah.generators.slots import pick, rng_for, ROLEPLAYS, SETTINGS
 from wamah.schema import Category, Item, Message
 
@@ -36,6 +36,7 @@ def render_sc(tier: str, probes: tuple[str, ...]) -> Item:
             Message(role="user", content=pick(rng, _STAGE).format(ask=PROBES[pid].ask))
         )
     harness = harness_id_for(tier, Category.SC, probes)
+    endgame = endgame_harness_id(Category.SC, probes) if tier.upper() == "S4" else None
     return Item(
         id=item_id(tier, Category.SC, probes, harness),
         tier=tier,
@@ -43,6 +44,7 @@ def render_sc(tier: str, probes: tuple[str, ...]) -> Item:
         depth=len(probes),
         probes=list(probes),
         harness=harness,
+        endgame_harness=endgame,
         openers=openers,
         meta={"generator": "sc", "setting": setting, "roleplay": roleplay},
     )

@@ -44,6 +44,36 @@ def _read(path: Path) -> list[Item]:
     return rows
 
 
+def _check_file(path: Path, x: int, expected: int, problems: list[str]) -> int:
+    """Stream-validate one category file: count, unique ids, tier/depth.
+    Only ids are retained, so S4 (194,481 rows) stays flat in memory."""
+    if not path.exists():
+        problems.append(f"{path} missing")
+        return -1
+    n = 0
+    ids: set[str] = set()
+    dup = False
+    bad = False
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            n += 1
+            row = Item.model_validate_json(line)
+            if row.id in ids:
+                dup = True
+            ids.add(row.id)
+            if row.tier.upper() != f"S{x}" or row.depth != x:
+                bad = True
+    if n != expected:
+        problems.append(f"{path.stem}: expected {expected} rows, got {n}")
+    if dup:
+        problems.append(f"{path.stem}: duplicate item IDs")
+    if bad:
+        problems.append(f"{path.stem}: bad tier/depth on at least one row")
+    return n
+
+
 def check_tier(x: int, out_dir: Path, category: Category | None) -> int:
     """Validate what was written. Returns 0 on success, 1 otherwise."""
     expected = items_per_category(x)
@@ -51,20 +81,9 @@ def check_tier(x: int, out_dir: Path, category: Category | None) -> int:
     problems: list[str] = []
     for cat in cats:
         path = out_dir / f"{cat.value.lower()}.jsonl"
-        if not path.exists():
-            problems.append(f"{path} missing")
-            continue
-        rows = _read(path)
-        if len(rows) != expected:
-            problems.append(f"{cat.value}: expected {expected} rows, got {len(rows)}")
-        ids = [r.id for r in rows]
-        if len(set(ids)) != len(ids):
-            problems.append(f"{cat.value}: duplicate item IDs")
-        for row in rows:
-            if row.tier.upper() != f"S{x}" or row.depth != x:
-                problems.append(f"{cat.value}: bad tier/depth on {row.id}")
-                break
-        print(f"{cat.value}: {len(rows)} items -> {path}")
+        n = _check_file(path, x, expected, problems)
+        if n >= 0:
+            print(f"{cat.value}: {n} items -> {path}")
     if problems:
         for msg in problems:
             print(f"FAIL {msg}", file=sys.stderr)
@@ -87,14 +106,21 @@ def run(x: int, argv: list[str] | None = None) -> int:
                         help="generate a single category only")
     parser.add_argument("--skip-check", action="store_true",
                         help="write only, skip the invariant checks")
+    parser.add_argument("--limit", type=int, default=0, metavar="N",
+                        help="write only the first N items per category (partial "
+                             "generation for previews/CI)")
     args = parser.parse_args(argv)
 
     cat = _category(args.category)
     out_dir = Path(args.out) / f"S{x}"
+    limit = args.limit if args.limit and args.limit > 0 else None
     started = time.perf_counter()
-    written = write_tier(x, out_dir, cat)
+    written = write_tier(x, out_dir, cat, limit=limit)
     elapsed = time.perf_counter() - started
     print(f"wrote {len(written)} file(s) for tier S{x} in {elapsed:.1f}s")
+    if limit:
+        print(f"partial generation (--limit {limit}): skipping full invariant check")
+        return 0
     if args.skip_check:
         return 0
     return check_tier(x, out_dir, cat)

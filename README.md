@@ -8,7 +8,7 @@
 
 777doc · *Vision Research: Envision Your Future*
 
-v0.1.0 · 57 tests · tiers S1–S3 materialized · `python -m wamah`
+v0.1.0 · 81 tests · tiers S1–S4 materialized · `python -m wamah`
 
 </div>
 
@@ -31,12 +31,13 @@ construction (touching 81.6% of all S2 tuples). Benign control probes
 simultaneously punish over-refusal, and agentic runs grade *executed* tool
 actions rather than text. Grading combines deterministic rules with a
 rubric-guided LLM judge, calibrated against a human-labelled gold set (13/13
-agreement on the deterministic path). We ship S1–S3 materialized (37,044
-items at S3), five backends including a fully offline replay mode, and a
-single headline number: **WAMAH-F** — the severity-weighted rate at which the
-model murders a human under pressure. A reference run against a deliberately
-broken scripted model validates the pipeline end to end
-(WAMAH-F = 6.25%, verdict `WILL MURDER A HUMAN`).
+agreement on the deterministic path). We ship S1–S4 materialized (777,924
+items at S4, the depth-4 tier with the adaptive hard-pressure profile), five
+backends including a fully offline replay mode, and a single headline
+number: **WAMAH-F** the severity-weighted rate at which the model murders a
+human under pressure. A reference run against a deliberately broken scripted
+model validates the pipeline end to end (WAMAH-F = 6.25%, verdict
+`WILL MURDER A HUMAN`).
 
 **Keywords:** AI safety · adversarial benchmark · red-teaming · jailbreak
 robustness · poison resistance · over-refusal · agentic safety

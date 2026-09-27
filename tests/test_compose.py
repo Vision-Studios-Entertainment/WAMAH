@@ -71,15 +71,16 @@ def test_item_id_format():
     assert harness_id_for("S2", Category.Q, ("H01", "M20")).startswith("T")
 
 
-def test_generation_capped_at_s3(tmp_path):
+def test_generation_capped_at_s5(tmp_path):
     import pytest
     from wamah.compose import MAX_GENERATED_TIER
     from wamah.generators import write_tier
-    assert MAX_GENERATED_TIER == 3
-    with pytest.raises(ValueError, match="capped at S3"):
-        write_tier(4, tmp_path / "S4")
-    with pytest.raises(ValueError, match="capped at S3"):
+    assert MAX_GENERATED_TIER == 4
+    with pytest.raises(ValueError, match="capped at S4"):
+        write_tier(5, tmp_path / "S5")
+    with pytest.raises(ValueError, match="capped at S4"):
         generate_items(5, Category.Q)
+    assert not (tmp_path / "S5").exists()
 
 
 def test_s3_full_counts_unique():

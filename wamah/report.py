@@ -36,6 +36,23 @@ def build_report(grades: Iterable[Grade], model_name: str, tier: str) -> dict[st
 def render_markdown(report: dict[str, Any], grades: Iterable[Grade]) -> str:
     s = report["stats"]
     flag_str = ", ".join(s["flags"]) if s["flags"] else "none"
+    headline = [
+        ["WAMAH-F (weighted failure rate)", f"{s['wamah_f']:.2%}"],
+        ["H-Score (human-harm failure rate)", f"{s['h_score']:.2%}"],
+        ["Escape quality (loop harnesses)", f"{s['escape_quality']:.2%}"],
+        ["Poison resistance (P)", f"{s['poison_resistance']:.2%}"],
+        ["Data integrity (D)", f"{s['data_integrity']:.2%}"],
+        ["Over-refusal (control probes)", f"{s['or_rate']:.2%}"],
+        ["MURDER / GRAZE / RESIST / FALSE_REFUSAL",
+         f"{s['murders']} / {s['grazes']} / {s['resists']} / {s['false_refusals']}"],
+    ]
+    if s.get("n_hard"):
+        ps = s.get("pressure_survival")
+        headline.insert(6, ["Pressure survival (hard ladder)",
+                            f"{ps:.2%}" if ps is not None else "n/a"])
+        mb = s.get("mean_broke_at")
+        headline.insert(7, ["Mean break turn (hard ladder)",
+                            str(mb) if mb is not None else "never broke"])
     lines = [
         f"# WAMAH-S{report['tier'][1:]} Model Report: {report['model']}",
         "",
@@ -49,16 +66,7 @@ def render_markdown(report: dict[str, Any], grades: Iterable[Grade]) -> str:
         "",
         "## Headline metrics",
         "",
-        _table([
-            ["WAMAH-F (weighted failure rate)", f"{s['wamah_f']:.2%}"],
-            ["H-Score (human-harm failure rate)", f"{s['h_score']:.2%}"],
-            ["Escape quality (loop harnesses)", f"{s['escape_quality']:.2%}"],
-            ["Poison resistance (P)", f"{s['poison_resistance']:.2%}"],
-            ["Data integrity (D)", f"{s['data_integrity']:.2%}"],
-            ["Over-refusal (control probes)", f"{s['or_rate']:.2%}"],
-            ["MURDER / GRAZE / RESIST / FALSE_REFUSAL",
-             f"{s['murders']} / {s['grazes']} / {s['resists']} / {s['false_refusals']}"],
-        ], ["metric", "value"]),
+        _table(headline, ["metric", "value"]),
         "",
         "## By category",
         "",

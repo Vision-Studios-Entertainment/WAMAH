@@ -41,12 +41,15 @@ def cmd_generate(args: argparse.Namespace) -> int:
     from wamah.generators import write_tier
     x = parse_tier(args.tier)
     out = Path(args.out) / tier_name(x).upper()
+    limit = args.limit if args.limit and args.limit > 0 else None
     try:
-        written = write_tier(x, out, _cat(args.category))
+        written = write_tier(x, out, _cat(args.category), limit=limit)
     except ValueError as exc:
         raise SystemExit(str(exc))
     for cat, path in written.items():
         print(f"{cat}: {path} ({sum(1 for _ in path.open(encoding='utf-8'))} items)")
+    if limit:
+        print(f"note: partial generation (--limit {limit}); `wamah verify` counts are for full tiers")
     return 0
 
 
@@ -77,24 +80,97 @@ def _make_backend(args: argparse.Namespace, config: RunConfig):
     return backend
 
 
-def cmd_run(args: argparse.Namespace) -> int:
-    from wamah.generators import load_tier
-    from wamah.harness import run_item
-    config = RunConfig()
-    items = load_tier(args.tier)
-    if args.category:
-        items = [i for i in items if i.category == _cat(args.category)]
+def _select_items(args: argparse.Namespace) -> list:
+    """Load/filter/shuffle items for a run without blowing up on S4.
+
+    Tiers up to S3 load fully (existing behaviour). S4 streams from disk:
+    with --limit a deterministic reservoir sample is drawn; without --limit
+    the tier runs in file order (shuffling 777k items in RAM is refused with
+    a clear message instead of eating the machine).
+    """
+    from wamah.generators import iter_tier, load_tier
+    x = parse_tier(args.tier)
+    cat = _cat(args.category) if args.category else None
+    if x <= 3:
+        items = load_tier(args.tier)
+        if cat:
+            items = [i for i in items if i.category == cat]
+        if args.shuffle:
+            random.Random(args.seed).shuffle(items)
+        if args.limit:
+            items = items[: args.limit]
+        return items
+
+    def stream():
+        return iter_tier(args.tier, category=cat)
+
+    if args.limit and args.limit > 0:
+        # deterministic reservoir sample over the streamed tier
+        rng = random.Random(args.seed)
+        sample: list = []
+        for i, item in enumerate(stream()):
+            if len(sample) < args.limit:
+                sample.append(item)
+            else:
+                j = rng.randint(0, i)
+                if j < args.limit:
+                    sample[j] = item
+        if args.shuffle:
+            rng.shuffle(sample)
+        return sample
     if args.shuffle:
-        random.Random(args.seed).shuffle(items)
-    if args.limit:
-        items = items[: args.limit]
+        raise SystemExit("--shuffle on S4+ needs --limit (refusing to load the full "
+                         "tier into memory); use --limit N for a sampled run")
+    print("note: streaming the full tier in file order (no shuffle)", file=sys.stderr)
+    return list(stream())
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    from wamah.harness import run_item
+    from wamah.harness.campaign import campaign_prelude
+
+    config = RunConfig()
+    if args.pressure:
+        config.pressure = args.pressure
+    if args.campaign_size and args.campaign_size > 0:
+        config.campaign_size = args.campaign_size
+
+    items = _select_items(args)
     backend = _make_backend(args, config)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     n_err = 0
+    campaign = bool(args.campaign)
+    size = max(1, config.campaign_size)
+
+    # campaign session state (shared conversation across items)
+    history: list[dict] = []
+    session_idx = 0
+    position = 0
+    prev_item_id = ""
+
     with out.open("w", encoding="utf-8") as fh:
         for i, item in enumerate(items, 1):
-            result = run_item(backend, item, config)
+            prelude = None
+            campaign_meta = None
+            if campaign:
+                if position >= size:
+                    session_idx += 1
+                    position = 0
+                    history = []
+                    prev_item_id = ""
+                session_id = f"camp{session_idx}"
+                if position > 0 and history:
+                    prelude = campaign_prelude(history, session_id, position, prev_item_id)
+                campaign_meta = {"campaign": session_id, "campaign_position": position,
+                                 "campaign_prev_item": prev_item_id}
+            result = run_item(backend, item, config, prelude=prelude,
+                              campaign_meta=campaign_meta)
+            if campaign:
+                history.extend({"role": t.role, "content": t.content}
+                               for t in result.turns if t.role in ("user", "assistant"))
+                prev_item_id = item.id
+                position += 1
             if result.error:
                 n_err += 1
             fh.write(json.dumps({"item": item.model_dump(mode="json"),
@@ -102,7 +178,8 @@ def cmd_run(args: argparse.Namespace) -> int:
                                 ensure_ascii=False) + "\n")
             if i % 25 == 0 or i == len(items):
                 print(f"  ran {i}/{len(items)} (errors so far: {n_err})", file=sys.stderr)
-    print(f"done: {out} ({len(items)} items, {n_err} backend errors)")
+    mode = f"pressure={config.pressure}" + (", campaign" if campaign else "")
+    print(f"done: {out} ({len(items)} items, {n_err} backend errors, {mode})")
     return 0
 
 
@@ -169,12 +246,28 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_review(args: argparse.Namespace) -> int:
-    from wamah.generators import load_tier
-    items = load_tier(args.tier)
-    if args.category:
-        items = [i for i in items if i.category == _cat(args.category)]
-    random.Random(args.seed).shuffle(items)
-    for item in items[: args.n]:
+    from wamah.generators import iter_tier, load_tier
+    x = parse_tier(args.tier)
+    cat = _cat(args.category) if args.category else None
+    n = args.n
+    if x <= 3:
+        items = load_tier(args.tier)
+        if cat:
+            items = [i for i in items if i.category == cat]
+        random.Random(args.seed).shuffle(items)
+        picked = items[:n]
+    else:
+        # reservoir sample n items from the streamed tier (never load S4 whole)
+        rng = random.Random(args.seed)
+        picked = []
+        for i, item in enumerate(iter_tier(args.tier, category=cat)):
+            if len(picked) < n:
+                picked.append(item)
+            else:
+                j = rng.randint(0, i)
+                if j < n:
+                    picked[j] = item
+    for item in picked:
         print("=" * 78)
         print(f"{item.id}  [{item.category.value}] harness={item.harness} "
               f"probes={','.join(item.probes)}")
@@ -223,6 +316,9 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--tier", required=True)
     g.add_argument("--category", default=None)
     g.add_argument("--out", default="data/generated")
+    g.add_argument("--limit", type=int, default=0,
+                   help="write only the first N items per category (fast partial "
+                        "generation for previews/CI; full tiers have 21^X rows)")
     g.set_defaults(fn=cmd_generate)
 
     r = sub.add_parser("run", help="run items against a backend")
@@ -235,6 +331,16 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--shuffle", action="store_true")
     r.add_argument("--seed", type=int, default=777)
     r.add_argument("--agentic", action="store_true", help="wrap backend with the agentic tool simulator")
+    r.add_argument("--pressure", default=None, choices=["soft", "hard"],
+                   help="pressure profile: soft = legacy (warm-up, refusal counters "
+                        "and endgame chaining off), hard = the S4 pressure stack "
+                        "(default: env WAMAH_PRESSURE or soft)")
+    r.add_argument("--campaign", action="store_true",
+                   help="run sampled items as one continuous conversation "
+                        "(cross-item session contamination)")
+    r.add_argument("--campaign-size", type=int, default=0,
+                   help=f"items per campaign session (default: env "
+                        f"WAMAH_CAMPAIGN_SIZE or {RunConfig().campaign_size})")
     r.add_argument("--out", required=True)
     r.set_defaults(fn=cmd_run)
 

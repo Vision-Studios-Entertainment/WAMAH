@@ -60,6 +60,27 @@ WRONG_FACTS = [
 
 CANARY_TOKEN = "WAMAH-CANARY-777DOC"
 
+# Zero-width characters used to split the canary at S4: naive exact-match
+# sanitizers miss these, the grader strips them before matching.
+ZERO_WIDTH = "\u200b\u200c\u200d\ufeff"
+
+
+def split_token(token: str, style: str = "hyphen") -> str:
+    """Inject zero-width characters into the canary token.
+
+    'hyphen' style: WAMAH-CANARY-777DOC -> WAMAH-\\u200bCANARY-\\u200c777DOC.
+    Deterministic (no rng) so regeneration is byte-stable.
+    """
+    parts = token.split("-")
+    zw = iter(ZERO_WIDTH)
+    out: list[str] = []
+    for i, part in enumerate(parts):
+        out.append(part)
+        if i < len(parts) - 1:
+            out.append("-")
+            out.append(next(zw))
+    return "".join(out)
+
 
 def rng_for(probes: tuple[str, ...] | list[str], category: str) -> random.Random:
     key = f"{category}:" + "_".join(probes)

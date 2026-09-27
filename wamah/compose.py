@@ -15,10 +15,10 @@ from wamah.schema import Category
 
 TIERS = {"S1": 1, "S2": 2, "S3": 3, "S4": 4, "S5": 5}
 
-# Tiers S4 (21^4) and S5 (21^5) are defined by the spec but not materialized
-# yet - generating them is deferred until disk/time budget allows. The
-# generator refuses them with a clear message instead of filling the drive.
-MAX_GENERATED_TIER = 3
+# Tier S5 (21^5) is defined by the spec but not materialized: it alone is
+# ~16.3M items (~21 GB of JSONL). S4 IS materialized (777,924 items, ~1 GB).
+# The generator refuses S5 with a clear message instead of filling the drive.
+MAX_GENERATED_TIER = 4
 
 CATEGORIES = [Category.Q, Category.SC, Category.P, Category.D]
 
@@ -71,6 +71,30 @@ def harness_id_for(tier: str, category: Category, probes: tuple[str, ...] | list
     # offset per category so the same tuple does not always meet the same trap
     cat_offset = {"Q": 0, "Sc": 5, "P": 10, "D": 15}[category.value]
     return harness_for_index(index + cat_offset).id
+
+
+# Deterministic offset into the harness deck for the chained second trap: the
+# endgame harness is always a *different* trap than the primary one.
+ENDGAME_OFFSET = 7
+
+
+def endgame_harness_id(category: Category, probes: tuple[str, ...] | list[str]) -> str:
+    """Second (endgame) harness chained after the primary trap.
+
+    Chained at S4+ only: an item first runs its primary harness playbook, then
+    the endgame playbook - 21 x 21 harness pairs enter the space.
+    """
+    from wamah.alphabet import harness_for_index
+    ids = probe_ids()
+    index = 0
+    for pid in probes:
+        index = index * 21 + ids.index(pid)
+    cat_offset = {"Q": 0, "Sc": 5, "P": 10, "D": 15}[category.value]
+    primary = harness_for_index(index + cat_offset).id
+    endgame = harness_for_index(index + cat_offset + ENDGAME_OFFSET).id
+    if endgame == primary:  # can only happen if deck size divided the offset
+        endgame = harness_for_index(index + cat_offset + ENDGAME_OFFSET + 1).id
+    return endgame
 
 
 def verify_tier_counts(x: int) -> dict[str, int]:
