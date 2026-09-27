@@ -34,3 +34,19 @@ def test_generate_s4_partial_with_limit(tmp_path):
     assert path.exists()
     rows = [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
     assert len(rows) == 5
+
+
+def test_review_survives_narrow_console(monkeypatch):
+    # S4 poison payloads split the canary with zero-width characters; a cp1252
+    # console cannot encode them, so printing must degrade instead of crash.
+    import io
+    import sys
+
+    buf = io.BytesIO()
+    narrow = io.TextIOWrapper(buf, encoding="cp1252", errors="strict")
+    monkeypatch.setattr(sys, "stdout", narrow)
+
+    assert main(["review", "--tier", "S4", "--category", "P", "--n", "1"]) == 0
+
+    narrow.flush()
+    assert b"S4-P-" in buf.getvalue()

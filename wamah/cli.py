@@ -37,6 +37,24 @@ def _cat(value: str | None) -> Category | None:
     raise SystemExit(f"unknown category: {value} (choose from {[c.value for c in CATEGORIES]})")
 
 
+def _safe_console() -> None:
+    """Keep printing alive on narrow consoles (Windows cp1252 and friends).
+
+    Poison payloads and model replies carry characters a console may refuse to
+    encode (S4 splits the canary with zero-width characters, for example).
+    Backslash escapes replace what the stream cannot encode, so unencodable
+    text degrades visibly instead of crashing with UnicodeEncodeError.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="backslashreplace")
+        except (ValueError, OSError, UnicodeError):
+            pass
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     from wamah.generators import write_tier
     x = parse_tier(args.tier)
@@ -309,6 +327,7 @@ def cmd_alphabet(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _safe_console()
     ap = argparse.ArgumentParser(prog="wamah", description="WAMAH-S[X] benchmark CLI")
     sub = ap.add_subparsers(dest="cmd")
 
